@@ -1,1 +1,1 @@
-from .interfaces import R1Interface
+from .interfaces import R1Interface, R1ProInterface

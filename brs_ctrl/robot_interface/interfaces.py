@@ -9,6 +9,21 @@ except ImportError as e:
     print(f"Failed to import ROS related modules, R1Interface won't work.")
     print(e)
 
+# ROS2 related imports for R1ProInterface
+try:
+    from rclpy.node import Node
+    from rclpy.qos import (
+        DurabilityPolicy,
+        HistoryPolicy,
+        QoSProfile,
+        ReliabilityPolicy,
+        qos_profile_sensor_data,
+    )
+    from builtin_interfaces.msg import Time as TimeMsg
+except ImportError as e:
+    print(f"Failed to import ROS2 related modules, R1ProInterface won't work.")
+    print(e)
+
 from geometry_msgs.msg import Twist
 from sensor_msgs.msg import JointState, PointCloud2, Image
 import numpy as np
@@ -16,7 +31,7 @@ from cv_bridge import CvBridge
 
 import brs_ctrl.utils as U
 from brs_ctrl.kinematics import R1Kinematics
-from brs_ctrl.robot_interface.grippers.base import R1BaseGripper
+from brs_ctrl.robot_interface.grippers.base import R1BaseGripper, R1ProBaseGripper
 from brs_ctrl.robot_interface.utils import get_xyz_points
 from brs_ctrl.robot_interface.mobile_base import Odom
 
@@ -702,3 +717,625 @@ class R1Interface:
     @property
     def curr_base_velocity(self):
         return self._odom.curr_base_velocity
+
+
+class R1ProInterface(Node):
+    torso_joint_high = np.array([1.8326, 2.5307, 1.5708, 3.0543])
+    torso_joint_low = np.array([-1.1345, -2.7925, -1.8326, -3.0543])
+    left_arm_joint_high = np.array(
+        [1.3090, 3.1416, 2.3562, 0.3491, 2.3562, 1.0472, 1.5708]
+    )
+    left_arm_joint_low = np.array(
+        [-4.4506, -0.1745, -2.3562, -2.0944, -2.3562, -1.0472, -1.5708]
+    )
+    right_arm_joint_high = np.array(
+        [1.3090, 0.1745, 2.3562, 0.3491, 2.3562, 1.0472, 1.5708]
+    )
+    right_arm_joint_low = np.array(
+        [-4.4506, -3.1416, -2.3562, -2.0944, -2.3562, -1.0472, -1.5708]
+    )
+
+    def __init__(
+        self,
+        *,
+        # ====== left arm ======
+        left_arm_joint_state_topic: str = "/hdas/feedback_arm_left",
+        left_arm_joint_target_position_topic: str = "/motion_target/target_joint_state_arm_left",
+        left_gripper: Optional[R1ProBaseGripper] = None,
+        # ====== right arm ======
+        right_arm_joint_state_topic: str = "/hdas/feedback_arm_right",
+        right_arm_joint_target_position_topic: str = "/motion_target/target_joint_state_arm_right",
+        right_gripper: Optional[R1ProBaseGripper] = None,
+        # ====== torso ======
+        torso_joint_state_topic: str = "/hdas/feedback_torso",
+        torso_joint_target_position_topic: str = "/motion_target/target_joint_state_torso",
+        # ====== mobile base ======
+        mobile_base_vel_cmd_topic: str = "/motion_target/target_speed_chassis",
+        mobile_base_cmd_threshold: Union[np.ndarray, float] = np.array(
+            [0.01, 0.01, 0.05]
+        ),
+        mobile_base_cmd_limit: Union[np.ndarray, float] = np.array([0.3, 0.3, 0.4]),
+        # ====== cameras ======
+        enable_rgb: bool = True,
+        rgb_topics: Optional[Dict[str, str]] = None,
+        # ====== common ======
+        publisher_node_name: str = "joint_state_publisher",
+        publisher_node_queue_size: int = 10,
+        state_buffer_size: int = 1000,
+        arm_joint_control_step_interval: float = 0.4,
+        torso_joint_control_step_interval: float = 0.1,
+        control_freq: float = 100.0,
+        on_arm_cmd_out_of_range: Literal["raise", "clip"] = "clip",
+        on_torso_cmd_out_of_range: Literal["raise", "clip"] = "clip",
+    ):
+        super().__init__(publisher_node_name)
+        # Frequency for sleeps (wall clock; prefer timers for periodic callbacks)
+        self._control_freq = float(control_freq)
+        self._sleep_dt = 1.0 / self._control_freq
+
+        self._left_arm_joint_state_buffer = None
+        self._right_arm_joint_state_buffer = None
+        self._torso_joint_state_buffer = None
+        self._state_buffer_size = state_buffer_size
+        self._rgb = None
+
+        # QoS
+        cmd_qos = QoSProfile(
+            reliability=ReliabilityPolicy.RELIABLE,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=publisher_node_queue_size,
+            durability=DurabilityPolicy.VOLATILE,
+        )
+        sens_qos = qos_profile_sensor_data
+
+        # command publishers
+        self._left_arm_joint_target_position_pub = self.create_publisher(
+            JointState, left_arm_joint_target_position_topic, cmd_qos
+        )
+        self._right_arm_joint_target_position_pub = self.create_publisher(
+            JointState, right_arm_joint_target_position_topic, cmd_qos
+        )
+        self._torso_joint_target_position_pub = self.create_publisher(
+            JointState, torso_joint_target_position_topic, cmd_qos
+        )
+
+        # sensor subscribers
+        self._left_arm_joint_state_sub = self.create_subscription(
+            JointState,
+            left_arm_joint_state_topic,
+            self._left_arm_state_callback,
+            sens_qos,
+        )
+        self._right_arm_joint_state_sub = self.create_subscription(
+            JointState,
+            right_arm_joint_state_topic,
+            self._right_arm_state_callback,
+            sens_qos,
+        )
+        self._torso_joint_state_sub = self.create_subscription(
+            JointState, torso_joint_state_topic, self._torso_state_callback, sens_qos
+        )
+
+        if enable_rgb:
+            rgb_topics = rgb_topics or {
+                "head": "/hdas/camera_head/left_raw/image_raw_color/compressed",
+                "left_wrist": "/hdas/camera_wrist_left/color/image_rect_raw/compressed",
+                "right_wrist": "/hdas/camera_wrist_right/color/image_rect_raw/compressed",
+            }
+            self._rgb = {k: None for k in rgb_topics}
+            self._cv_bridge = CvBridge()
+            self._rgb_subs = {
+                k: self.create_subscription(
+                    CompressedImage, v, partial(self._rgb_callback, name=k), sens_qos
+                )
+                for k, v in rgb_topics.items()
+            }
+        else:
+            self._cv_bridge = self._rgb_subs = None
+
+        # mobile base
+        if isinstance(mobile_base_cmd_threshold, float):
+            mobile_base_cmd_threshold = np.array(
+                [
+                    mobile_base_cmd_threshold,
+                ]
+                * 3
+            )
+        if isinstance(mobile_base_cmd_limit, float):
+            mobile_base_cmd_limit = np.array(
+                [
+                    mobile_base_cmd_limit,
+                ]
+                * 3
+            )
+        assert mobile_base_cmd_threshold.shape == mobile_base_cmd_limit.shape == (3,)
+        self._mobile_base_cmd_threshold = mobile_base_cmd_threshold
+        self._mobile_base_cmd_limit = mobile_base_cmd_limit
+        self._mobile_base_vel_cmd_pub = self.create_publisher(
+            Twist, mobile_base_vel_cmd_topic, cmd_qos
+        )
+
+        self._left_gripper, self._right_gripper = left_gripper, right_gripper
+        if self._left_gripper is not None:
+            self._left_gripper.init_hook(self)
+        if self._right_gripper is not None:
+            self._right_gripper.init_hook(self)
+
+        assert on_arm_cmd_out_of_range in ["raise", "clip"]
+        self._on_arm_cmd_out_of_range = on_arm_cmd_out_of_range
+        assert on_torso_cmd_out_of_range in ["raise", "clip"]
+        self._on_torso_cmd_out_of_range = on_torso_cmd_out_of_range
+
+        self._arm_joint_control_step_interval = arm_joint_control_step_interval
+        self._torso_joint_control_step_interval = torso_joint_control_step_interval
+
+    def control(
+        self,
+        *,
+        arm_controller: Literal["joint_position"] = "joint_position",
+        arm_cmd: Dict[str, Optional[np.ndarray]],
+        gripper_cmd: Optional[Dict[str, float]] = None,
+        torso_controller: Literal["joint_position"] = "joint_position",
+        torso_cmd: Optional[np.ndarray] = None,
+        base_cmd: Optional[np.ndarray] = None,
+    ):
+        assert (
+            arm_controller == "joint_position"
+        ), f"Invalid arm controller {arm_controller}"
+        assert (
+            torso_controller == "joint_position"
+        ), f"Invalid torso controller {torso_controller}"
+        assert "left" in arm_cmd and "right" in arm_cmd
+        if gripper_cmd is not None:
+            assert "left" in gripper_cmd and "right" in gripper_cmd
+
+        # base control
+        base_cmd = np.zeros((3,)) if base_cmd is None else base_cmd
+        try:
+            self._mobile_base_control(base_cmd)
+        except Exception as e:
+            self.get_logger().warning(f"Base control interrupted: {e}")
+
+        # upper-body control
+        try:
+            self._upper_body_joint_position_control(
+                left_arm_target_q=arm_cmd["left"],
+                right_arm_target_q=arm_cmd["right"],
+                torso_target_q=torso_cmd,
+            )
+        except Exception as e:
+            self.get_logger().warning(f"Upper-body control interrupted: {e}")
+
+        # optional gripper control
+        if gripper_cmd is not None:
+            try:
+                self._gripper_control(gripper_cmd)
+            except Exception as e:
+                self.get_logger().warning(f"Gripper control interrupted: {e}")
+
+    # ---------- Helpers ----------
+    def _now_msg(self) -> TimeMsg:
+        return self.get_clock().now().to_msg()
+
+    def _sleep_tick(self):
+        time.sleep(self._sleep_dt)
+
+    def _mobile_base_control(self, cmd: np.ndarray):
+        cmd = cmd.copy()
+        set_zero = np.abs(cmd) < self._mobile_base_cmd_threshold
+        cmd[set_zero] = 0.0
+        cmd = np.clip(cmd, -self._mobile_base_cmd_limit, self._mobile_base_cmd_limit)
+        msg = Twist()
+        msg.linear.x = float(cmd[0])
+        msg.linear.y = float(cmd[1])
+        msg.angular.z = float(cmd[2])
+        self._mobile_base_vel_cmd_pub.publish(msg)
+
+    def stop_mobile_base(self):
+        self._mobile_base_vel_cmd_pub.publish(Twist())
+
+    def _upper_body_joint_position_control(
+        self,
+        left_arm_target_q: Optional[np.ndarray] = None,
+        right_arm_target_q: Optional[np.ndarray] = None,
+        torso_target_q: Optional[np.ndarray] = None,
+    ):
+        # shape checks
+        if left_arm_target_q is not None:
+            assert left_arm_target_q.shape == (
+                7,
+            ), f"Expected (7,), got {left_arm_target_q.shape}"
+        if right_arm_target_q is not None:
+            assert right_arm_target_q.shape == (
+                7,
+            ), f"Expected (7,), got {right_arm_target_q.shape}"
+        if torso_target_q is not None:
+            assert torso_target_q.shape == (
+                4,
+            ), f"Expected (4,), got {torso_target_q.shape}"
+
+        # range checks (with clipping if chosen)
+        if left_arm_target_q is not None:
+            left_in_range = np.logical_and(
+                left_arm_target_q >= self.left_arm_joint_low,
+                left_arm_target_q <= self.left_arm_joint_high,
+            )
+            for idx in np.where(~left_in_range)[0]:
+                msg = (
+                    f"Left arm joint {idx+1} target {left_arm_target_q[idx]} out of range "
+                    f"[{self.left_arm_joint_low[idx]}, {self.left_arm_joint_high[idx]}]."
+                )
+                if self._on_arm_cmd_out_of_range == "clip":
+                    left_arm_target_q[idx] = np.clip(
+                        left_arm_target_q[idx],
+                        self.left_arm_joint_low[idx],
+                        self.left_arm_joint_high[idx],
+                    )
+                    msg += " Clipped."
+                    self.get_logger().warning(msg)
+                else:
+                    raise ValueError(msg)
+
+        if right_arm_target_q is not None:
+            right_in_range = np.logical_and(
+                right_arm_target_q >= self.right_arm_joint_low,
+                right_arm_target_q <= self.right_arm_joint_high,
+            )
+            for idx in np.where(~right_in_range)[0]:
+                msg = (
+                    f"Right arm joint {idx+1} target {right_arm_target_q[idx]} out of range "
+                    f"[{self.right_arm_joint_low[idx]}, {self.right_arm_joint_high[idx]}]."
+                )
+                if self._on_arm_cmd_out_of_range == "clip":
+                    right_arm_target_q[idx] = np.clip(
+                        right_arm_target_q[idx],
+                        self.right_arm_joint_low[idx],
+                        self.right_arm_joint_high[idx],
+                    )
+                    msg += " Clipped."
+                    self.get_logger().warning(msg)
+                else:
+                    raise ValueError(msg)
+
+        if torso_target_q is not None:
+            torso_in_range = np.logical_and(
+                torso_target_q >= self.torso_joint_low,
+                torso_target_q <= self.torso_joint_high,
+            )
+            for idx in np.where(~torso_in_range)[0]:
+                msg = (
+                    f"Torso joint {idx+1} target {torso_target_q[idx]} out of range "
+                    f"[{self.torso_joint_low[idx]}, {self.torso_joint_high[idx]}]."
+                )
+                if self._on_torso_cmd_out_of_range == "clip":
+                    torso_target_q[idx] = np.clip(
+                        torso_target_q[idx],
+                        self.torso_joint_low[idx],
+                        self.torso_joint_high[idx],
+                    )
+                    self.get_logger().warning(msg)
+                else:
+                    raise ValueError(msg)
+
+        # compute step counts
+        last_two_arms_joint_positions = self.last_joint_position
+        left_arm_joint_state = JointState()
+        left_arm_joint_state.position = last_two_arms_joint_positions[
+            "left_arm"
+        ].tolist()
+        left_arm_n_steps = (
+            int(
+                np.ceil(
+                    np.max(
+                        np.abs(
+                            (
+                                left_arm_target_q
+                                - np.array(left_arm_joint_state.position)
+                            )
+                            / self._arm_joint_control_step_interval
+                        )
+                    )
+                )
+            )
+            if left_arm_target_q is not None
+            else 0
+        )
+        right_arm_joint_state = JointState()
+        right_arm_joint_state.position = last_two_arms_joint_positions[
+            "right_arm"
+        ].tolist()
+        right_arm_n_steps = (
+            int(
+                np.ceil(
+                    np.max(
+                        np.abs(
+                            (
+                                right_arm_target_q
+                                - np.array(right_arm_joint_state.position)
+                            )
+                            / self._arm_joint_control_step_interval
+                        )
+                    )
+                )
+            )
+            if right_arm_target_q is not None
+            else 0
+        )
+        last_torso_joint_positions = self.last_joint_position["torso"]
+        torso_joint_state = JointState()
+        torso_joint_state.position = last_torso_joint_positions.tolist()
+        torso_n_steps = (
+            int(
+                np.ceil(
+                    np.max(
+                        np.abs(
+                            (torso_target_q - np.array(torso_joint_state.position))
+                            / self._torso_joint_control_step_interval
+                        )
+                    )
+                )
+            )
+            if torso_target_q is not None
+            else 0
+        )
+
+        # control loop
+        max_n_steps = max(left_arm_n_steps, right_arm_n_steps, torso_n_steps)
+        if max_n_steps > 1:
+            left_arm_increment = (
+                (
+                    (left_arm_target_q - np.array(left_arm_joint_state.position))
+                    / (left_arm_n_steps - 1)
+                )
+                if (left_arm_target_q is not None and left_arm_n_steps > 1)
+                else (
+                    (left_arm_target_q - np.array(left_arm_joint_state.position))
+                    if left_arm_target_q is not None
+                    else np.zeros(6)
+                )
+            )
+            right_arm_increment = (
+                (
+                    (right_arm_target_q - np.array(right_arm_joint_state.position))
+                    / (right_arm_n_steps - 1)
+                )
+                if (right_arm_target_q is not None and right_arm_n_steps > 1)
+                else (
+                    (right_arm_target_q - np.array(right_arm_joint_state.position))
+                    if right_arm_target_q is not None
+                    else np.zeros(6)
+                )
+            )
+            torso_increment = (
+                (
+                    (torso_target_q - np.array(torso_joint_state.position))
+                    / (torso_n_steps - 1)
+                )
+                if (torso_target_q is not None and torso_n_steps > 1)
+                else (
+                    (torso_target_q - np.array(torso_joint_state.position))
+                    if torso_target_q is not None
+                    else np.zeros(4)
+                )
+            )
+
+            for step in range(max_n_steps - 1):
+                if left_arm_target_q is not None:
+                    left_arm_joint_state.header.stamp = self._now_msg()
+                    if step <= left_arm_n_steps - 1:
+                        left_arm_joint_state.position = (
+                            np.array(left_arm_joint_state.position) + left_arm_increment
+                        ).tolist()
+                    else:
+                        left_arm_joint_state.position = left_arm_target_q.tolist()
+                    self._left_arm_joint_target_position_pub.publish(
+                        left_arm_joint_state
+                    )
+
+                if right_arm_target_q is not None:
+                    right_arm_joint_state.header.stamp = self._now_msg()
+                    if step <= right_arm_n_steps - 1:
+                        right_arm_joint_state.position = (
+                            np.array(right_arm_joint_state.position)
+                            + right_arm_increment
+                        ).tolist()
+                    else:
+                        right_arm_joint_state.position = right_arm_target_q.tolist()
+                    self._right_arm_joint_target_position_pub.publish(
+                        right_arm_joint_state
+                    )
+
+                if torso_target_q is not None:
+                    torso_joint_state.header.stamp = self._now_msg()
+                    if step <= torso_n_steps - 1:
+                        torso_joint_state.position = (
+                            np.array(torso_joint_state.position) + torso_increment
+                        ).tolist()
+                    else:
+                        torso_joint_state.position = torso_target_q.tolist()
+                    self._torso_joint_target_position_pub.publish(torso_joint_state)
+
+                self._sleep_tick()
+
+        # ensure exact final target positions
+        if left_arm_target_q is not None:
+            left_arm_joint_state.header.stamp = self._now_msg()
+            left_arm_joint_state.position = left_arm_target_q.tolist()
+            self._left_arm_joint_target_position_pub.publish(left_arm_joint_state)
+        if right_arm_target_q is not None:
+            right_arm_joint_state.header.stamp = self._now_msg()
+            right_arm_joint_state.position = right_arm_target_q.tolist()
+            self._right_arm_joint_target_position_pub.publish(right_arm_joint_state)
+        if torso_target_q is not None:
+            torso_joint_state.header.stamp = self._now_msg()
+            torso_joint_state.position = torso_target_q.tolist()
+            self._torso_joint_target_position_pub.publish(torso_joint_state)
+
+        if not (
+            left_arm_target_q is None
+            and right_arm_target_q is None
+            and torso_target_q is None
+        ):
+            self._sleep_tick()
+
+    def _gripper_control(self, gripper_action: Dict[str, float]):
+        left_gripper_action = gripper_action["left"]
+        right_gripper_action = gripper_action["right"]
+        assert (
+            1 >= left_gripper_action >= 0
+        ), "Invalid left gripper action, must be between 0 and 1"
+        assert (
+            1 >= right_gripper_action >= 0
+        ), "Invalid right gripper action, must be between 0 and 1"
+        if self._left_gripper is not None:
+            self._left_gripper.act(left_gripper_action)
+        if self._right_gripper is not None:
+            self._right_gripper.act(right_gripper_action)
+
+    def _rgb_callback(self, rgb_msg: CompressedImage, name: str):
+        timestamp = rgb_msg.header.stamp.sec + rgb_msg.header.stamp.nanosec * 1e-9
+        img = np.asarray(
+            self._cv_bridge.compressed_imgmsg_to_cv2(rgb_msg, desired_encoding="rgb8")
+        )
+        self._rgb[name] = {"img": img, "stamp": timestamp}
+
+    def _left_arm_state_callback(self, data: JointState):
+        new_state = {
+            "joint_position": np.clip(
+                np.array([data.position[:7]]),
+                self.left_arm_joint_low,
+                self.left_arm_joint_high,
+            ),
+            "joint_velocity": np.array([data.velocity][:7]),
+            "joint_effort": np.array([data.effort][:7]),
+            "seq": np.array(
+                [data.header.stamp.nanosec]
+            ),  # seq not present in ROS 2; store something monotonic-ish
+            "stamp": np.array(
+                [data.header.stamp.sec + data.header.stamp.nanosec * 1e-9]
+            ),
+        }
+        if self._left_arm_joint_state_buffer is None:
+            self._left_arm_joint_state_buffer = new_state
+        else:
+            self._left_arm_joint_state_buffer = U.any_concat(
+                [self._left_arm_joint_state_buffer, new_state], dim=0
+            )
+            self._left_arm_joint_state_buffer = U.any_slice(
+                self._left_arm_joint_state_buffer, np.s_[-self._state_buffer_size :]
+            )
+
+    def _right_arm_state_callback(self, data: JointState):
+        new_state = {
+            "joint_position": np.clip(
+                np.array([data.position[:7]]),
+                self.right_arm_joint_low,
+                self.right_arm_joint_high,
+            ),
+            "joint_velocity": np.array([data.velocity][:7]),
+            "joint_effort": np.array([data.effort][:7]),
+            "seq": np.array([data.header.stamp.nanosec]),
+            "stamp": np.array(
+                [data.header.stamp.sec + data.header.stamp.nanosec * 1e-9]
+            ),
+        }
+        if self._right_arm_joint_state_buffer is None:
+            self._right_arm_joint_state_buffer = new_state
+        else:
+            self._right_arm_joint_state_buffer = U.any_concat(
+                [self._right_arm_joint_state_buffer, new_state], dim=0
+            )
+            self._right_arm_joint_state_buffer = U.any_slice(
+                self._right_arm_joint_state_buffer, np.s_[-self._state_buffer_size :]
+            )
+
+    def _torso_state_callback(self, data: JointState):
+        new_state = {
+            "joint_position": np.clip(
+                np.array([data.position[:4]]),
+                self.torso_joint_low,
+                self.torso_joint_high,
+            ),
+            "joint_velocity": np.array([data.velocity][:4]),
+            "joint_effort": np.array([data.effort][:4]),
+            "seq": np.array([data.header.stamp.nanosec]),
+            "stamp": np.array(
+                [data.header.stamp.sec + data.header.stamp.nanosec * 1e-9]
+            ),
+        }
+        if self._torso_joint_state_buffer is None:
+            self._torso_joint_state_buffer = new_state
+        else:
+            self._torso_joint_state_buffer = U.any_concat(
+                [self._torso_joint_state_buffer, new_state], dim=0
+            )
+            self._torso_joint_state_buffer = U.any_slice(
+                self._torso_joint_state_buffer, np.s_[-self._state_buffer_size :]
+            )
+
+    # ---------- Lifecycle ----------
+    def close(self):
+        # stop the base
+        self.stop_mobile_base()
+        if self._left_gripper is not None:
+            self._left_gripper.close()
+        if self._right_gripper is not None:
+            self._right_gripper.close()
+        try:
+            self.destroy_node()
+        except Exception:
+            pass
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
+
+    @property
+    def last_joint_position(self) -> Dict[str, np.ndarray]:
+        if (
+            self._left_arm_joint_state_buffer is None
+            or self._right_arm_joint_state_buffer is None
+            or self._torso_joint_state_buffer is None
+        ):
+            return None  # return None if any buffer is None
+        return {
+            "left_arm": U.any_slice(self._left_arm_joint_state_buffer, -1)[
+                "joint_position"
+            ],
+            "right_arm": U.any_slice(self._right_arm_joint_state_buffer, -1)[
+                "joint_position"
+            ],
+            "torso": U.any_slice(self._torso_joint_state_buffer, -1)["joint_position"],
+        }
+
+    @property
+    def last_gripper_state(self):
+        if (
+            self._left_gripper.state_buffer is None
+            or self._right_gripper.state_buffer is None
+        ):
+            return None  # return None if any buffer is None
+        return {
+            "left_gripper": (U.any_slice(self._left_gripper.state_buffer, -1)),
+            "right_gripper": (U.any_slice(self._right_gripper.state_buffer, -1)),
+        }
+
+    @property
+    def last_rgb(self):
+        # Because v can be None
+        if self._rgb is not None:
+            return_dict = {}
+            for k, v in self._rgb.items():
+                if v is not None:
+                    return_dict[k] = {
+                        "img": v["img"],
+                        "stamp": v["stamp"],
+                    }
+                else:
+                    return_dict = None  # set to None if any key is not ready
+                    break
+            return return_dict
+        else:
+            return None
