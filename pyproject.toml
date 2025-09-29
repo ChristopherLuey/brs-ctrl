@@ -9,6 +9,7 @@ dependencies = [
     "h5py",
     "pybullet",
     "tqdm",
+    "gymnasium",
 ]
 requires-python = ">=3.11"
 authors = [
