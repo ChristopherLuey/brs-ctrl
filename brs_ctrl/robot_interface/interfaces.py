@@ -1,16 +1,22 @@
 from typing import Literal, Optional, Dict, Union
 from functools import partial
 
-import rospy
+# ROS1 related imports for R1Interface
+try:
+    import rospy
+    import ros_numpy
+except ImportError as e:
+    print(f"Failed to import ROS related modules, R1Interface won't work.")
+    print(e)
+
 from geometry_msgs.msg import Twist
 from sensor_msgs.msg import JointState, PointCloud2, Image
-import ros_numpy
 import numpy as np
 from cv_bridge import CvBridge
 
 import brs_ctrl.utils as U
 from brs_ctrl.kinematics import R1Kinematics
-from brs_ctrl.robot_interface.grippers.base import BaseGripper
+from brs_ctrl.robot_interface.grippers.base import R1BaseGripper
 from brs_ctrl.robot_interface.utils import get_xyz_points
 from brs_ctrl.robot_interface.mobile_base import Odom
 
@@ -29,11 +35,11 @@ class R1Interface:
         # ====== left arm ======
         left_arm_joint_state_topic: str = "/hdas/feedback_arm_left",
         left_arm_joint_target_position_topic: str = "/motion_target/target_joint_state_arm_left",
-        left_gripper: Optional[BaseGripper] = None,
+        left_gripper: Optional[R1BaseGripper] = None,
         # ====== right arm ======
         right_arm_joint_state_topic: str = "/hdas/feedback_arm_right",
         right_arm_joint_target_position_topic: str = "/motion_target/target_joint_state_arm_right",
-        right_gripper: Optional[BaseGripper] = None,
+        right_gripper: Optional[R1BaseGripper] = None,
         # ====== torso ======
         torso_joint_state_topic: str = "/hdas/feedback_torso",
         torso_joint_target_position_topic: str = "/motion_target/target_joint_state_torso",

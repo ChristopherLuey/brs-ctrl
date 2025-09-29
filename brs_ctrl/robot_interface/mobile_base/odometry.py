@@ -1,6 +1,12 @@
 import numpy as np
 import quaternion
-import rospy
+
+try:
+    import rospy
+except ImportError as e:
+    print(f"Failed to import ROS related modules, Odom won't work.")
+    print(e)
+
 from nav_msgs.msg import Odometry
 
 

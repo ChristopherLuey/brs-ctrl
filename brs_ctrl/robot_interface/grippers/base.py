@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 from sensor_msgs.msg import JointState
 
 
-class BaseGripper(ABC):
+class R1BaseGripper(ABC):
     """
     The base class for all different grippers.
     This class is agnostic to the low-level control of a specific gripper.

@@ -1,15 +1,20 @@
 from typing import Any, Union, Literal
 
-import rospy
+try:
+    import rospy
+except ImportError as e:
+    print(f"Failed to import ROS related modules, GalaxeaR1Gripper won't work.")
+    print(e)
+
 import numpy as np
 from std_msgs.msg import Float32
 from sensor_msgs.msg import JointState
 
 import brs_ctrl.utils as U
-from brs_ctrl.robot_interface.grippers.base import BaseGripper
+from brs_ctrl.robot_interface.grippers.base import R1BaseGripper
 
 
-class GalaxeaR1Gripper(BaseGripper):
+class GalaxeaR1Gripper(R1BaseGripper):
     def __init__(
         self,
         left_or_right: Literal["left", "right"],

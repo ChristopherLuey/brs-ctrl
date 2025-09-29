@@ -7,7 +7,7 @@ import serial
 import numpy as np
 from sensor_msgs.msg import JointState
 
-from brs_ctrl.robot_interface.grippers.base import BaseGripper
+from brs_ctrl.robot_interface.grippers.base import R1BaseGripper
 
 
 class _InspireHand:
@@ -332,7 +332,7 @@ class _InspireHand:
         return setspeed
 
 
-class InspireHand(BaseGripper):
+class InspireHand(R1BaseGripper):
     def __init__(
         self,
         hand_id: int,
