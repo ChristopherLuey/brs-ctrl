@@ -17,7 +17,7 @@ class R1Kinematics:
     def __init__(
         self,
     ):
-        urdf_path = os.path.join(ASSET_ROOT, "robot", "r1_pro", "r1_pro.urdf")
+        urdf_path = os.path.join(ASSET_ROOT, "robot", "r1", "r1.urdf")
 
         self._pb_client_id = pb.connect(pb.DIRECT)
         self._pb_robot_id = pb.loadURDF(

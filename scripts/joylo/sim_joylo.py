@@ -35,7 +35,7 @@ if __name__ == "__main__":
     pb.setGravity(0, 0, -9.8)
     # load robot
     robot = pb.loadURDF(
-        os.path.join(ASSET_ROOT, "robot/r1_pro/r1_pro.urdf"),
+        os.path.join(ASSET_ROOT, "robot/r1/r1.urdf"),
         [0, 0, 0],
         useFixedBase=True,
     )
