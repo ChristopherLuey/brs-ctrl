@@ -465,3 +465,35 @@ class JoyLoArmImpedanceController:
             "left": left_arm_q,
             "right": right_arm_q,
         }
+
+
+class R1ProJoyLoArmPositionController(JoyLoArmPositionController):
+    LEFT_JOINT_LIMIT_LOW = np.array(
+        [-4.4506, -0.1745, -2.3562, -2.0944, -2.3562, -1.0472, -1.5708]
+    )
+    LEFT_JOINT_LIMIT_HIGH = np.array(
+        [1.3090, 3.1416, 2.3562, 0.3491, 2.3562, 1.0472, 1.5708]
+    )
+
+    RIGHT_JOINT_LIMIT_LOW = np.array(
+        [-4.4506, -3.1416, -2.3562, -2.0944, -2.3562, -1.0472, -1.5708]
+    )
+    RIGHT_JOINT_LIMIT_HIGH = np.array(
+        [1.3090, 0.1745, 2.3562, 0.3491, 2.3562, 1.0472, 1.5708]
+    )
+
+
+class R1ProJoyLoArmImpedanceController(JoyLoArmImpedanceController):
+    LEFT_JOINT_LIMIT_LOW = np.array(
+        [-4.4506, -0.1745, -2.3562, -2.0944, -2.3562, -1.0472, -1.5708]
+    )
+    LEFT_JOINT_LIMIT_HIGH = np.array(
+        [1.3090, 3.1416, 2.3562, 0.3491, 2.3562, 1.0472, 1.5708]
+    )
+
+    RIGHT_JOINT_LIMIT_LOW = np.array(
+        [-4.4506, -3.1416, -2.3562, -2.0944, -2.3562, -1.0472, -1.5708]
+    )
+    RIGHT_JOINT_LIMIT_HIGH = np.array(
+        [1.3090, 0.1745, 2.3562, 0.3491, 2.3562, 1.0472, 1.5708]
+    )

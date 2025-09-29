@@ -2,10 +2,12 @@ from typing import Union
 
 import numpy as np
 
-from brs_ctrl.joylo.joycon import R1JoyConInterface
+from brs_ctrl.joylo.joycon import R1JoyConInterface, R1ProJoyConInterface
 from brs_ctrl.joylo.joylo_arms import (
     JoyLoArmPositionController,
     JoyLoArmImpedanceController,
+    R1ProJoyLoArmPositionController,
+    R1ProJoyLoArmImpedanceController,
 )
 
 
@@ -13,8 +15,13 @@ class JoyLoController:
     def __init__(
         self,
         *,
-        joycon: R1JoyConInterface,
-        joylo_arms: Union[JoyLoArmPositionController, JoyLoArmImpedanceController],
+        joycon: Union[R1JoyConInterface, R1ProJoyConInterface],
+        joylo_arms: Union[
+            JoyLoArmPositionController,
+            JoyLoArmImpedanceController,
+            R1ProJoyLoArmPositionController,
+            R1ProJoyLoArmImpedanceController,
+        ],
     ):
         self._joycon = joycon
         self._joylo_arms = joylo_arms
