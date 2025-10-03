@@ -1,5 +1,6 @@
 from typing import Literal, Optional, Dict, Union
 from functools import partial
+import time
 
 # ROS1 related imports for R1Interface
 try:
@@ -24,8 +25,8 @@ except ImportError as e:
     print(f"Failed to import ROS2 related modules, R1ProInterface won't work.")
     print(e)
 
-from geometry_msgs.msg import Twist
-from sensor_msgs.msg import JointState, PointCloud2, Image
+from geometry_msgs.msg import Twist, TwistStamped
+from sensor_msgs.msg import JointState, PointCloud2, Image, CompressedImage
 import numpy as np
 from cv_bridge import CvBridge
 
@@ -852,7 +853,7 @@ class R1ProInterface(Node):
         self._mobile_base_cmd_threshold = mobile_base_cmd_threshold
         self._mobile_base_cmd_limit = mobile_base_cmd_limit
         self._mobile_base_vel_cmd_pub = self.create_publisher(
-            Twist, mobile_base_vel_cmd_topic, cmd_qos
+            TwistStamped, mobile_base_vel_cmd_topic, cmd_qos
         )
 
         self._left_gripper, self._right_gripper = left_gripper, right_gripper
@@ -925,14 +926,17 @@ class R1ProInterface(Node):
         set_zero = np.abs(cmd) < self._mobile_base_cmd_threshold
         cmd[set_zero] = 0.0
         cmd = np.clip(cmd, -self._mobile_base_cmd_limit, self._mobile_base_cmd_limit)
-        msg = Twist()
-        msg.linear.x = float(cmd[0])
-        msg.linear.y = float(cmd[1])
-        msg.angular.z = float(cmd[2])
+        msg = TwistStamped()
+        twist_msg = Twist()
+        twist_msg.linear.x = float(cmd[0])
+        twist_msg.linear.y = float(cmd[1])
+        twist_msg.angular.z = float(cmd[2])
+        msg.twist = twist_msg
         self._mobile_base_vel_cmd_pub.publish(msg)
 
     def stop_mobile_base(self):
-        self._mobile_base_vel_cmd_pub.publish(Twist())
+        msg = TwistStamped()
+        self._mobile_base_vel_cmd_pub.publish(msg)
 
     def _upper_body_joint_position_control(
         self,
