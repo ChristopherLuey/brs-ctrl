@@ -757,7 +757,7 @@ class R1ProInterface(Node):
         ),
         mobile_base_cmd_limit: Union[np.ndarray, float] = np.array([0.3, 0.3, 0.4]),
         # ====== odometry ======
-        odometry_topic: str = "/zed2/zed_node/odom",
+        odometry_topic: str = "/camera/odom/sample",
         T_odom2base: Optional[np.ndarray] = None,
         wait_for_first_odom_msg: bool = False,
         # ====== cameras ======
