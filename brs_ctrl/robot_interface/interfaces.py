@@ -756,6 +756,10 @@ class R1ProInterface(Node):
             [0.01, 0.01, 0.05]
         ),
         mobile_base_cmd_limit: Union[np.ndarray, float] = np.array([0.3, 0.3, 0.4]),
+        # ====== odometry ======
+        odometry_topic: str = "/zed2/zed_node/odom",
+        T_odom2base: Optional[np.ndarray] = None,
+        wait_for_first_odom_msg: bool = False,
         # ====== cameras ======
         enable_rgb: bool = True,
         rgb_topics: Optional[Dict[str, str]] = None,
@@ -854,6 +858,16 @@ class R1ProInterface(Node):
         self._mobile_base_cmd_limit = mobile_base_cmd_limit
         self._mobile_base_vel_cmd_pub = self.create_publisher(
             TwistStamped, mobile_base_vel_cmd_topic, cmd_qos
+        )
+
+        # odometry
+        if T_odom2base is None:
+            T_odom2base = np.eye(4)  # Identity if no transform provided
+        self._odom = Odom(
+            self,  # ROS2 node
+            odom_topic=odometry_topic,
+            T_odom2base=T_odom2base,
+            wait_for_first_msg=wait_for_first_odom_msg,
         )
 
         self._left_gripper, self._right_gripper = left_gripper, right_gripper
@@ -1343,3 +1357,19 @@ class R1ProInterface(Node):
             return return_dict
         else:
             return None
+
+    @property
+    def curr_base_pose(self):
+        return self._odom.curr_base_pose
+
+    @property
+    def curr_base_position(self):
+        return self._odom.curr_base_position
+
+    @property
+    def curr_base_orientation(self):
+        return self._odom.curr_base_orientation
+
+    @property
+    def curr_base_velocity(self):
+        return self._odom.curr_base_velocity
