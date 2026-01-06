@@ -2554,4 +2554,87 @@
       effort="100"
       velocity="0.25" />
   </joint>
+  <!-- T265 Tracking Camera -->
+  <link
+    name="t265_mount">
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="meshes/t265_mount.stl" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.8 0.8 0.8 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="meshes/t265_mount.stl" />
+      </geometry>
+    </collision>
+  </link>
+  <joint
+    name="t265_mount_joint"
+    type="fixed">
+    <origin
+      xyz="-0.217664 0 0.31299"
+      rpy="0 0 0" />
+    <parent
+      link="base_link" />
+    <child
+      link="t265_mount" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+  <link name="t265_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/t265.stl" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.8 0.8 0.8 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/t265.stl" />
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="0.068024" />
+      <origin xyz="0 0 0" />
+      <inertia ixx="0.0000039782" ixy="0.0" ixz="0.000000034641" iyy="0.000065045" iyz="0.0" izz="0.000067499" />
+    </inertial>
+  </link>
+  <joint
+    name="t265_joint"
+    type="fixed">
+    <origin
+      xyz="-0.017454 -0.000393 0.000262"
+      rpy="1.57079632679 0 1.57079632679" />
+    <parent
+      link="t265_mount" />
+    <child
+      link="t265_link" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+  <joint name="t265_pose_tracking_joint" type="fixed">
+    <origin xyz="-0.0091 0.0 0.0" rpy="-1.57079632679 1.57079632679 0"/>
+    <parent link="t265_link"/>
+    <child link="t265_pose_tracking_frame"/>
+  </joint>
+  <link name="t265_pose_tracking_frame"/>
 </robot>

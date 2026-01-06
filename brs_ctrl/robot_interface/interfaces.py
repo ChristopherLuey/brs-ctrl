@@ -31,7 +31,7 @@ import numpy as np
 from cv_bridge import CvBridge
 
 import brs_ctrl.utils as U
-from brs_ctrl.kinematics import R1Kinematics
+from brs_ctrl.kinematics import R1Kinematics, R1ProKinematics
 from brs_ctrl.robot_interface.grippers.base import R1BaseGripper, R1ProBaseGripper
 from brs_ctrl.robot_interface.utils import get_xyz_points
 from brs_ctrl.robot_interface.mobile_base import Odom
@@ -758,7 +758,6 @@ class R1ProInterface(Node):
         mobile_base_cmd_limit: Union[np.ndarray, float] = np.array([0.3, 0.3, 0.4]),
         # ====== odometry ======
         odometry_topic: str = "/camera/odom/sample",
-        T_odom2base: Optional[np.ndarray] = None,
         wait_for_first_odom_msg: bool = False,
         # ====== cameras ======
         enable_rgb: bool = True,
@@ -774,6 +773,8 @@ class R1ProInterface(Node):
         on_torso_cmd_out_of_range: Literal["raise", "clip"] = "clip",
     ):
         super().__init__(publisher_node_name)
+        self._kin_model = R1ProKinematics()
+
         # Frequency for sleeps (wall clock; prefer timers for periodic callbacks)
         self._control_freq = float(control_freq)
         self._sleep_dt = 1.0 / self._control_freq
@@ -861,12 +862,10 @@ class R1ProInterface(Node):
         )
 
         # odometry
-        if T_odom2base is None:
-            T_odom2base = np.eye(4)  # Identity if no transform provided
         self._odom = Odom(
             self,  # ROS2 node
             odom_topic=odometry_topic,
-            T_odom2base=T_odom2base,
+            T_odom2base=self._kin_model.T_odom2base,
             wait_for_first_msg=wait_for_first_odom_msg,
         )
 
