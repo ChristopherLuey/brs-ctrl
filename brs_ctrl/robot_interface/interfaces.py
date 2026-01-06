@@ -750,6 +750,8 @@ class R1ProInterface(Node):
         # ====== torso ======
         torso_joint_state_topic: str = "/hdas/feedback_torso",
         torso_joint_target_position_topic: str = "/motion_target/target_joint_state_torso",
+        # ====== chassis ======
+        chassis_joint_state_topic: str = "/hdas/feedback_chassis",
         # ====== mobile base ======
         mobile_base_vel_cmd_topic: str = "/motion_target/target_speed_chassis",
         mobile_base_cmd_threshold: Union[np.ndarray, float] = np.array(
@@ -781,6 +783,7 @@ class R1ProInterface(Node):
         self._left_arm_joint_state_buffer = None
         self._right_arm_joint_state_buffer = None
         self._torso_joint_state_buffer = None
+        self._chassis_joint_state_buffer = None
         self._state_buffer_size = state_buffer_size
         self._rgb = None
 
@@ -819,6 +822,9 @@ class R1ProInterface(Node):
         )
         self._torso_joint_state_sub = self.create_subscription(
             JointState, torso_joint_state_topic, self._torso_state_callback, sens_qos
+        )
+        self._chassis_joint_state_sub = self.create_subscription(
+            JointState, chassis_joint_state_topic, self._chassis_state_callback, sens_qos
         )
 
         if enable_rgb:
@@ -1291,6 +1297,26 @@ class R1ProInterface(Node):
                 self._torso_joint_state_buffer, np.s_[-self._state_buffer_size :]
             )
 
+    def _chassis_state_callback(self, data: JointState):
+        # Chassis feedback: position has 3 values, velocity has 6 values (use first 3)
+        new_state = {
+            "joint_position": np.array([data.position[:3]]),
+            "joint_velocity": np.array([data.velocity[:3]]),
+            "seq": np.array([data.header.stamp.nanosec]),
+            "stamp": np.array(
+                [data.header.stamp.sec + data.header.stamp.nanosec * 1e-9]
+            ),
+        }
+        if self._chassis_joint_state_buffer is None:
+            self._chassis_joint_state_buffer = new_state
+        else:
+            self._chassis_joint_state_buffer = U.any_concat(
+                [self._chassis_joint_state_buffer, new_state], dim=0
+            )
+            self._chassis_joint_state_buffer = U.any_slice(
+                self._chassis_joint_state_buffer, np.s_[-self._state_buffer_size :]
+            )
+
     # ---------- Lifecycle ----------
     def close(self):
         # stop the base
@@ -1338,6 +1364,35 @@ class R1ProInterface(Node):
         return {
             "left_gripper": (U.any_slice(self._left_gripper.state_buffer, -1)),
             "right_gripper": (U.any_slice(self._right_gripper.state_buffer, -1)),
+        }
+
+    @property
+    def last_chassis_position(self) -> Optional[np.ndarray]:
+        """Get the last chassis position (3 values) from /hdas/feedback_chassis."""
+        if self._chassis_joint_state_buffer is None:
+            return None
+        return U.any_slice(self._chassis_joint_state_buffer, -1)["joint_position"]
+
+    @property
+    def last_chassis_velocity(self) -> Optional[np.ndarray]:
+        """Get the last chassis velocity (first 3 of 6 values) from /hdas/feedback_chassis."""
+        if self._chassis_joint_state_buffer is None:
+            return None
+        return U.any_slice(self._chassis_joint_state_buffer, -1)["joint_velocity"]
+
+    @property
+    def last_joint_velocity(self) -> Optional[Dict[str, np.ndarray]]:
+        """Get the last joint velocities for all robot parts."""
+        if (
+            self._left_arm_joint_state_buffer is None
+            or self._right_arm_joint_state_buffer is None
+            or self._torso_joint_state_buffer is None
+        ):
+            return None
+        return {
+            "left_arm": U.any_slice(self._left_arm_joint_state_buffer, -1)["joint_velocity"],
+            "right_arm": U.any_slice(self._right_arm_joint_state_buffer, -1)["joint_velocity"],
+            "torso": U.any_slice(self._torso_joint_state_buffer, -1)["joint_velocity"],
         }
 
     @property
