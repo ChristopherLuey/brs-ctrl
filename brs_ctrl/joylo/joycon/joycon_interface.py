@@ -425,8 +425,8 @@ class R1ProJoyConInterface:
         *,
         calibration_file: Optional[str] = None,
         # ====== mobile base ======
-        mobile_base_x_move_max: float = 0.3,
-        mobile_base_y_move_max: float = 0.3,
+        mobile_base_x_move_max: float = 0.4,
+        mobile_base_y_move_max: float = 0.4,
         mobile_base_yaw_rotate_max: float = 0.4,
         # ====== torso ======
         torso_joint_max_delta: float = 0.1,
@@ -686,21 +686,21 @@ class R1ProJoyConInterface:
             )
             delta_rv *= -1  # because vertical direction is reversed
             torso_cmd[2] += (
-                2
+                2.1
                 * delta_rv
                 / (rv_limits[1] - rv_limits[0])
                 * self._torso_joint_max_delta
             )
         if self.jc_left.get_button_up():
-            diff = self._torso_joints1_2_stand_q - torso_cmd[:2]
+            diff = self._torso_joints1_2_stand_q - torso_cmd[:3]
             torso_cmd[0] += np.sign(diff[0]) * self._torso_joint_max_delta * 1.74 / 2.7
             torso_cmd[1] += np.sign(diff[1]) * self._torso_joint_max_delta
-            torso_cmd[2] += np.sign(diff[2]) * self._torso_joint_max_delta * 0.96 / 2.7
+            # torso_cmd[2] += np.sign(diff[2]) * self._torso_joint_max_delta * 0.96 / 2.7
         elif self.jc_left.get_button_down():
-            diff = self._torso_joints1_2_squat_q - torso_cmd[:2]
+            diff = self._torso_joints1_2_squat_q - torso_cmd[:3]
             torso_cmd[0] += np.sign(diff[0]) * self._torso_joint_max_delta * 1.74 / 2.7
             torso_cmd[1] += np.sign(diff[1]) * self._torso_joint_max_delta
-            torso_cmd[2] += np.sign(diff[2]) * self._torso_joint_max_delta * 0.96 / 2.7
+            # torso_cmd[2] += np.sign(diff[2]) * self._torso_joint_max_delta * 0.96 / 2.7
         torso_cmd[0] = np.clip(
             torso_cmd[0],
             self._torso_joints1_2_stand_q[0],
@@ -711,11 +711,11 @@ class R1ProJoyConInterface:
             self._torso_joints1_2_squat_q[1],
             self._torso_joints1_2_stand_q[1],
         )
-        torso_cmd[2] = np.clip(
-            torso_cmd[2],
-            self._torso_joints1_2_squat_q[2],
-            self._torso_joints1_2_stand_q[2],
-        )
+        # torso_cmd[2] = np.clip(
+        #     torso_cmd[2],
+        #     self._torso_joints1_2_squat_q[2],
+        #     self._torso_joints1_2_stand_q[2],
+        # )
         torso_cmd = np.clip(torso_cmd, self.torso_joint_low, self.torso_joint_high)
 
         # process gripper
