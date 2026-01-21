@@ -685,8 +685,10 @@ class R1ProJoyConInterface:
                 abs(delta_rv), a_max=(rv_limits[1] - rv_limits[0]) / 2, a_min=0
             )
             delta_rv *= -1  # because vertical direction is reversed
+            # Asymmetric speed: faster forward (joystick down), slower backward (up)
+            multiplier = 1.5 if delta_rv > 0 else 2.75
             torso_cmd[2] += (
-                2.1
+                multiplier
                 * delta_rv
                 / (rv_limits[1] - rv_limits[0])
                 * self._torso_joint_max_delta
