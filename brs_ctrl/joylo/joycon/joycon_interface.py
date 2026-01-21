@@ -296,7 +296,7 @@ class R1JoyConInterface:
         rh = self._rh_ema
         rv = self._rv_ema
 
-        torso_cmd = curr_torso_q
+        torso_cmd = curr_torso_q.copy()  # Must copy to avoid modifying input array
         if rh > rh_neutral_range[1] or rh < rh_neutral_range[0]:
             rh = np.clip(rh, rh_limits[0], rh_limits[1])
             delta_rh = rh - 0.5 * sum(rh_neutral_range)
@@ -663,7 +663,7 @@ class R1ProJoyConInterface:
         rh = self._rh_ema
         rv = self._rv_ema
 
-        torso_cmd = curr_torso_q
+        torso_cmd = curr_torso_q.copy()  # Must copy to avoid modifying input array
         if rh > rh_neutral_range[1] or rh < rh_neutral_range[0]:
             rh = np.clip(rh, rh_limits[0], rh_limits[1])
             delta_rh = rh - 0.5 * sum(rh_neutral_range)
